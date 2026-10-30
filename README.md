@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # misconfig-DefaultPasswordChecker
 Scans configuration files and running processes for the presence of default passwords. Uses a predefined database of common default credentials and simple pattern matching via `psutil` and file system crawling. - Focused on Check for misconfigurations in configuration files or infrastructure definitions
 
