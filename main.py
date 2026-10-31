@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import re
+import sys
 import json
 import yaml
 import psutil
@@ -35,6 +36,7 @@ class DefaultPasswordChecker:
         self.root_dir = root_dir
         self.process_scan = process_scan
         self.findings = []  # List to store findings
+        self.unread_files = []  # Files the file scan could not read
 
     def scan_file(self, filepath):
         """
@@ -49,8 +51,10 @@ class DefaultPasswordChecker:
                 self.check_content(content, filepath)
         except FileNotFoundError:
             logging.error(f"File not found: {filepath}")
+            self.unread_files.append(filepath)
         except Exception as e:
             logging.error(f"Error reading file {filepath}: {e}")
+            self.unread_files.append(filepath)
 
     def check_content(self, content, filepath):
         """
@@ -85,7 +89,11 @@ class DefaultPasswordChecker:
         """
         Crawls the file system and scans files for default passwords.
         """
-        for root, _, files in os.walk(self.root_dir):
+        def walk_error(error):
+            logging.error(f"Error accessing {error.filename}: {error}")
+            self.unread_files.append(error.filename or str(error))
+
+        for root, _, files in os.walk(self.root_dir, onerror=walk_error):
             for file in files:
                 filepath = os.path.join(root, file)
                 self.scan_file(filepath)
@@ -133,9 +141,14 @@ class DefaultPasswordChecker:
             logging.info("Scanning running processes...")
             self.scan_processes()
 
+        if self.unread_files:
+            logging.info(f"Scan completed with an incomplete file scan: {len(self.unread_files)} file(s) could not be read.")
         if self.findings:
             logging.info("Scan completed.  Possible default passwords found.")
             return self.findings
+        elif self.unread_files:
+            logging.info("Scan incomplete. No default passwords found in the files that could be read.")
+            return []
         else:
             logging.info("Scan completed. No default passwords found.")
             return [] # Return an empty list if no findings
@@ -177,6 +190,10 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Verbose logging enabled.")
 
+    if not os.path.isdir(args.root_dir):
+        logging.error(f"Root directory does not exist or is not a directory: {args.root_dir}")
+        sys.exit(1)
+
     checker = DefaultPasswordChecker(root_dir=args.root_dir, process_scan=args.process_scan)
     findings = checker.run_scan()
 
@@ -189,6 +206,10 @@ def main():
             logging.error(f"Error writing to output file {args.output}: {e}")
     elif findings:
         print(json.dumps(findings, indent=4)) # Print to standard output
+
+    if checker.unread_files:
+        logging.error(f"File scan incomplete: {len(checker.unread_files)} file(s) could not be read.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
