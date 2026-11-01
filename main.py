@@ -66,6 +66,14 @@ class DefaultPasswordChecker:
         """
         for username, password in DEFAULT_PASSWORDS.items():
             # Create regex patterns for both username and password, also hashing options
+            # Nothing anchors the end of the password, and the username
+            # only has to appear before a colon or an equals sign, so a
+            # line setting admin to a long password that merely begins
+            # with the letters of the default is reported as the default
+            # itself. The hash patterns further down need no username or
+            # assignment at all: the bare hex digest of a default password
+            # anywhere in any file, a document, a checksum list, counts
+            # as that credential pair found in that file.
             patterns = [
                 rf"(?i){username}\s*[:=]\s*['\"]?{password}['\"]?",
                 rf"(?i){password}\s*[:=]\s*['\"]?{username}['\"]?",
@@ -75,6 +83,10 @@ class DefaultPasswordChecker:
 
             for pattern in patterns:
               if re.search(pattern, content):
+                # The hashes in the pattern list are recomputed for every
+                # file I scan, inside this loop, though they never change.
+                # On the default whole filesystem scan that is the same five
+                # digests calculated once per file on the machine.
                 self.findings.append({
                     "filepath": filepath,
                     "username": username,
@@ -93,6 +105,13 @@ class DefaultPasswordChecker:
             logging.error(f"Error accessing {error.filename}: {error}")
             self.unread_files.append(error.filename or str(error))
 
+        # The default root is the whole filesystem, and every file in
+        # it is opened as UTF-8 text. Binaries fail to decode and pile
+        # into the unread list that fails the run at the end, and
+        # special files under the system directories can behave worse
+        # than fail: some can be read forever. A default run is
+        # therefore close to guaranteed to end as incomplete, quite
+        # apart from anything it finds.
         for root, _, files in os.walk(self.root_dir, onerror=walk_error):
             for file in files:
                 filepath = os.path.join(root, file)
@@ -126,6 +145,11 @@ class DefaultPasswordChecker:
                                 break # Avoid redundant findings for the same process credentials.
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
+                # This handler reaches back into process.info for a process
+                # that may have just exited, which is one of the errors being
+                # handled. When that access raises too, it escapes the handler
+                # and ends the whole scan, so one short lived process at the
+                # wrong moment can cost every result gathered so far.
                 logging.warning(f"Error accessing process information for PID {process.info['pid']}: {e}")
             except Exception as e:
                 logging.error(f"Unexpected error while scanning process {process.info['pid']}: {e}")
@@ -195,6 +219,11 @@ def main():
         sys.exit(1)
 
     checker = DefaultPasswordChecker(root_dir=args.root_dir, process_scan=args.process_scan)
+    # Findings alone never set the exit code in main. A scan that
+    # finds default passwords everywhere and reads every file
+    # exits 0; only the unread list below produces a failure. A
+    # caller gating on the exit code learns about my incomplete
+    # scans and nothing about my positive ones.
     findings = checker.run_scan()
 
     if args.output:
